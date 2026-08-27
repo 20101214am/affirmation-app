@@ -7,9 +7,11 @@ import android.bluetooth.BluetoothProfile
 import android.content.Intent
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.app.TimePickerDialog
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -63,6 +65,8 @@ class MainActivity : ComponentActivity() {
         var repeatCount by remember { mutableStateOf(settings.repeatCount) }
         var intervalSeconds by remember { mutableStateOf(settings.intervalSeconds) }
         var frequencyPreset by remember { mutableStateOf(settings.frequencyPreset) }
+        var scheduleMode by remember { mutableStateOf(settings.scheduleMode) }
+        var fixedTimes by remember { mutableStateOf(settings.fixedTimes) }
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
         var isRecording by remember { mutableStateOf(false) }
         var hasRecording by remember { mutableStateOf(settings.hasRecording) }
@@ -181,26 +185,89 @@ class MainActivity : ComponentActivity() {
                         )
 
                         HorizontalDivider()
-                        Text("播放频率", style = MaterialTheme.typography.titleMedium)
+                        Text("播放模式", style = MaterialTheme.typography.titleMedium)
 
-                        FrequencyOption(
-                            selected = frequencyPreset == "high",
-                            onSelect = { frequencyPreset = "high"; dirty = true },
-                            title = "高频",
-                            detail = "每 10-20 分钟"
-                        )
-                        FrequencyOption(
-                            selected = frequencyPreset == "medium",
-                            onSelect = { frequencyPreset = "medium"; dirty = true },
-                            title = "中频",
-                            detail = "每 1.5-2.5 小时"
-                        )
-                        FrequencyOption(
-                            selected = frequencyPreset == "low",
-                            onSelect = { frequencyPreset = "low"; dirty = true },
-                            title = "低频",
-                            detail = "每 6-8 小时"
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = scheduleMode == "random",
+                                onClick = { scheduleMode = "random"; dirty = true }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("随机间隔")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = scheduleMode == "fixed",
+                                onClick = { scheduleMode = "fixed"; dirty = true }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("固定时间")
+                        }
+
+                        if (scheduleMode == "random") {
+                            HorizontalDivider()
+                            Text("播放频率", style = MaterialTheme.typography.titleMedium)
+                            FrequencyOption(
+                                selected = frequencyPreset == "high",
+                                onSelect = { frequencyPreset = "high"; dirty = true },
+                                title = "高频",
+                                detail = "每 10-15 分钟"
+                            )
+                            FrequencyOption(
+                                selected = frequencyPreset == "medium",
+                                onSelect = { frequencyPreset = "medium"; dirty = true },
+                                title = "中频",
+                                detail = "每 30-40 分钟"
+                            )
+                            FrequencyOption(
+                                selected = frequencyPreset == "low",
+                                onSelect = { frequencyPreset = "low"; dirty = true },
+                                title = "低频",
+                                detail = "每 1-2 小时"
+                            )
+                        } else {
+                            HorizontalDivider()
+                            Text("每天固定时间播放", style = MaterialTheme.typography.titleMedium)
+                            if (fixedTimes.isEmpty()) {
+                                Text(
+                                    "尚未添加时间，请点击下方按钮添加",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            } else {
+                                fixedTimes.sorted().forEach { t ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(t, modifier = Modifier.weight(1f))
+                                        IconButton(
+                                            onClick = {
+                                                fixedTimes = fixedTimes - t
+                                                dirty = true
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "删除时间",
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    showTimePicker { picked ->
+                                        fixedTimes = fixedTimes + picked
+                                        dirty = true
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("添加播放时间")
+                            }
+                        }
 
                         HorizontalDivider()
                         Row(
@@ -234,6 +301,8 @@ class MainActivity : ComponentActivity() {
                             repeatCount = repeatCount,
                             intervalSeconds = intervalSeconds,
                             frequencyPreset = frequencyPreset,
+                            scheduleMode = scheduleMode,
+                            fixedTimes = fixedTimes,
                             bluetoothOnly = bluetoothOnly,
                             serviceEnabled = serviceEnabled
                         )
@@ -341,10 +410,27 @@ class MainActivity : ComponentActivity() {
                 BluetoothAdapter.STATE_CONNECTED
     }
 
+    private fun showTimePicker(onPicked: (String) -> Unit) {
+        val cal = Calendar.getInstance()
+        TimePickerDialog(
+            this,
+            { _, hour, minute ->
+                val hh = hour.toString().padStart(2, '0')
+                val mm = minute.toString().padStart(2, '0')
+                onPicked("$hh:$mm")
+            },
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            true
+        ).show()
+    }
+
     private fun saveSettings(
         repeatCount: Int,
         intervalSeconds: Int,
         frequencyPreset: String,
+        scheduleMode: String,
+        fixedTimes: Set<String>,
         bluetoothOnly: Boolean,
         serviceEnabled: Boolean
     ) {
@@ -355,6 +441,8 @@ class MainActivity : ComponentActivity() {
         settings.frequencyPreset = frequencyPreset
         settings.randomMinMinutes = min
         settings.randomMaxMinutes = max
+        settings.scheduleMode = scheduleMode
+        settings.fixedTimes = fixedTimes
         settings.bluetoothOnly = bluetoothOnly
 
         Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()

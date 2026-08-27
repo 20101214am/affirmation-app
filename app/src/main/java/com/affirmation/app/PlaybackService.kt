@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
+import java.util.Calendar
 import java.util.Random
 
 class PlaybackService : Service() {
@@ -44,7 +45,7 @@ class PlaybackService : Service() {
 
         when (intent?.action) {
             ACTION_PLAY -> handlePlayTrigger()
-            else -> scheduleNextPlay()
+            else -> if (settings.scheduleMode == "fixed") scheduleFixed() else scheduleNextPlay()
         }
 
         return START_STICKY
@@ -115,13 +116,13 @@ class PlaybackService : Service() {
                         if (currentRepeat < repeatCount) {
                             handler.postDelayed({ playOnce() }, intervalMs)
                         } else {
-                            scheduleNextPlay()
+                            reschedule()
                         }
                     }
                     start()
                 }
             } catch (e: Exception) {
-                scheduleNextPlay()
+                reschedule()
             }
         }
 
@@ -161,6 +162,48 @@ class PlaybackService : Service() {
         }
     }
 
+    private fun reschedule() {
+        if (settings.scheduleMode == "fixed") scheduleFixed() else scheduleNextPlay()
+    }
+
+    private fun scheduleFixed() {
+        val times = settings.fixedTimes
+        if (times.isEmpty()) {
+            scheduleNextPlay()
+            return
+        }
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val now = System.currentTimeMillis()
+        for (t in times) {
+            val parts = t.split(":")
+            if (parts.size != 2) continue
+            val hour = parts[0].toIntOrNull() ?: continue
+            val minute = parts[1].toIntOrNull() ?: continue
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (timeInMillis <= now) add(Calendar.DAY_OF_YEAR, 1)
+            }
+            val intent = Intent(this, PlaybackService::class.java).apply {
+                action = ACTION_PLAY
+            }
+            val requestCode = hour * 60 + minute
+            val pendingIntent = PendingIntent.getService(
+                this, requestCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            try {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP, cal.timeInMillis, pendingIntent
+                )
+            } catch (e: SecurityException) {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, cal.timeInMillis, pendingIntent)
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -182,10 +225,11 @@ class PlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val modeText = if (settings.scheduleMode == "fixed") "固定时间模式" else "随机间隔模式"
         val statusText = if (settings.bluetoothOnly && !isBluetoothHeadsetConnected()) {
             "服务运行中，未连接蓝牙，等待连接后播放"
         } else {
-            "服务运行中，等待下次播放"
+            "服务运行中（$modeText），等待下次播放"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
