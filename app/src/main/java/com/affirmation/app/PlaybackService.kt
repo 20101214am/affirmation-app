@@ -26,6 +26,7 @@ class PlaybackService : Service() {
         private const val NOTIFICATION_ID = 1
         const val ACTION_PLAY = "com.affirmation.app.ACTION_PLAY"
         const val ACTION_START = "com.affirmation.app.ACTION_START"
+        private const val RETRY_DELAY_MS = 5 * 60 * 1000L
     }
 
     private lateinit var settings: SettingsStore
@@ -51,10 +52,30 @@ class PlaybackService : Service() {
 
     private fun handlePlayTrigger() {
         if (!shouldPlay()) {
-            scheduleNextPlay()
+            // 条件不满足（如未连蓝牙），短间隔重试，避免用户连上蓝牙后还要等很久
+            scheduleRetrySoon()
             return
         }
         playAffirmation()
+    }
+
+    private fun scheduleRetrySoon() {
+        val triggerTime = System.currentTimeMillis() + RETRY_DELAY_MS
+        val intent = Intent(this, PlaybackService::class.java).apply {
+            action = ACTION_PLAY
+        }
+        val pendingIntent = PendingIntent.getService(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        try {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+            )
+        } catch (e: SecurityException) {
+            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+        }
     }
 
     private fun shouldPlay(): Boolean {
@@ -161,9 +182,15 @@ class PlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val statusText = if (settings.bluetoothOnly && !isBluetoothHeadsetConnected()) {
+            "服务运行中，未连接蓝牙，等待连接后播放"
+        } else {
+            "服务运行中，等待下次播放"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("信念播放器")
-            .setContentText("服务运行中，等待下次播放")
+            .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pendingIntent)
             .setOngoing(true)

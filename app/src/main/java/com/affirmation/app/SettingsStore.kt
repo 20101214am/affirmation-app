@@ -37,8 +37,31 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_HAS_RECORDING, false)
         set(value) = prefs.edit().putBoolean(KEY_HAS_RECORDING, value).apply()
 
+    var frequencyPreset: String
+        get() = prefs.getString(KEY_FREQUENCY_PRESET, "medium") ?: "medium"
+        set(value) = prefs.edit().putString(KEY_FREQUENCY_PRESET, value).apply()
+
     fun getRecordingFile(context: Context): File {
         return File(context.filesDir, "recording.m4a")
+    }
+
+    fun deleteRecording(context: Context): Boolean {
+        val file = getRecordingFile(context)
+        val deleted = if (file.exists()) file.delete() else true
+        hasRecording = false
+        return deleted
+    }
+
+    fun presetMinMinutes(preset: String): Int = when (preset) {
+        "high" -> 10
+        "low" -> 360
+        else -> 90
+    }
+
+    fun presetMaxMinutes(preset: String): Int = when (preset) {
+        "high" -> 20
+        "low" -> 480
+        else -> 150
     }
 
     companion object {
@@ -49,5 +72,6 @@ class SettingsStore(context: Context) {
         private const val KEY_RANDOM_MAX = "random_max_minutes"
         private const val KEY_BLUETOOTH_ONLY = "bluetooth_only"
         private const val KEY_HAS_RECORDING = "has_recording"
+        private const val KEY_FREQUENCY_PRESET = "frequency_preset"
     }
 }

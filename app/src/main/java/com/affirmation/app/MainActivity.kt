@@ -1,6 +1,9 @@
 package com.affirmation.app
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Intent
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -58,11 +62,14 @@ class MainActivity : ComponentActivity() {
         var serviceEnabled by remember { mutableStateOf(settings.serviceEnabled) }
         var repeatCount by remember { mutableStateOf(settings.repeatCount) }
         var intervalSeconds by remember { mutableStateOf(settings.intervalSeconds) }
-        var randomMinMinutes by remember { mutableStateOf(settings.randomMinMinutes) }
-        var randomMaxMinutes by remember { mutableStateOf(settings.randomMaxMinutes) }
+        var frequencyPreset by remember { mutableStateOf(settings.frequencyPreset) }
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
         var isRecording by remember { mutableStateOf(false) }
         var hasRecording by remember { mutableStateOf(settings.hasRecording) }
+        var bluetoothConnected by remember { mutableStateOf(isBluetoothConnected()) }
+
+        // 设置是否被修改（用于提示先保存）
+        var dirty by remember { mutableStateOf(false) }
 
         Scaffold(
             topBar = {
@@ -91,12 +98,31 @@ class MainActivity : ComponentActivity() {
                         Text("录音", style = MaterialTheme.typography.titleMedium)
 
                         if (hasRecording) {
-                            Text("已录音", color = MaterialTheme.colorScheme.primary)
-                            Button(onClick = { playTest() }) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("试听")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("已录音", color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(12.dp))
+                                Button(onClick = { playTest() }) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("试听")
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        deleteRecording()
+                                        hasRecording = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("删除")
+                                }
                             }
+                        } else {
+                            Text("尚未录音", color = MaterialTheme.colorScheme.outline)
                         }
 
                         Button(
@@ -137,7 +163,7 @@ class MainActivity : ComponentActivity() {
                             value = repeatCount.toFloat(),
                             onValueChange = {
                                 repeatCount = it.toInt()
-                                settings.repeatCount = it.toInt()
+                                dirty = true
                             },
                             valueRange = 1f..20f,
                             steps = 18
@@ -148,48 +174,84 @@ class MainActivity : ComponentActivity() {
                             value = intervalSeconds.toFloat(),
                             onValueChange = {
                                 intervalSeconds = it.toInt()
-                                settings.intervalSeconds = it.toInt()
+                                dirty = true
                             },
                             valueRange = 1f..60f,
                             steps = 58
                         )
 
-                        Text("最短触发间隔: ${randomMinMinutes}分钟")
-                        Slider(
-                            value = randomMinMinutes.toFloat(),
-                            onValueChange = {
-                                randomMinMinutes = it.toInt()
-                                settings.randomMinMinutes = it.toInt()
-                            },
-                            valueRange = 5f..240f,
-                            steps = 46
+                        HorizontalDivider()
+                        Text("播放频率", style = MaterialTheme.typography.titleMedium)
+
+                        FrequencyOption(
+                            selected = frequencyPreset == "high",
+                            onSelect = { frequencyPreset = "high"; dirty = true },
+                            title = "高频",
+                            detail = "每 10-20 分钟"
+                        )
+                        FrequencyOption(
+                            selected = frequencyPreset == "medium",
+                            onSelect = { frequencyPreset = "medium"; dirty = true },
+                            title = "中频",
+                            detail = "每 1.5-2.5 小时"
+                        )
+                        FrequencyOption(
+                            selected = frequencyPreset == "low",
+                            onSelect = { frequencyPreset = "low"; dirty = true },
+                            title = "低频",
+                            detail = "每 6-8 小时"
                         )
 
-                        Text("最长触发间隔: ${randomMaxMinutes}分钟")
-                        Slider(
-                            value = randomMaxMinutes.toFloat(),
-                            onValueChange = {
-                                randomMaxMinutes = it.toInt()
-                                settings.randomMaxMinutes = it.toInt()
-                            },
-                            valueRange = 10f..480f,
-                            steps = 93
-                        )
-
+                        HorizontalDivider()
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("仅蓝牙耳机播放", modifier = Modifier.weight(1f))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("仅蓝牙耳机播放")
+                                Text(
+                                    if (bluetoothConnected) "已连接蓝牙" else "未连接蓝牙",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (bluetoothConnected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outline
+                                )
+                            }
                             Switch(
                                 checked = bluetoothOnly,
                                 onCheckedChange = {
                                     bluetoothOnly = it
-                                    settings.bluetoothOnly = it
+                                    dirty = true
                                 }
                             )
                         }
                     }
+                }
+
+                // --- Save Button ---
+                Button(
+                    onClick = {
+                        saveSettings(
+                            repeatCount = repeatCount,
+                            intervalSeconds = intervalSeconds,
+                            frequencyPreset = frequencyPreset,
+                            bluetoothOnly = bluetoothOnly,
+                            serviceEnabled = serviceEnabled
+                        )
+                        dirty = false
+                        bluetoothConnected = isBluetoothConnected()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("保存设置")
+                }
+                if (dirty) {
+                    Text(
+                        "设置已修改，点上方\"保存设置\"后生效",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
 
                 // --- Master Switch ---
@@ -226,7 +288,33 @@ class MainActivity : ComponentActivity() {
 
                 // --- Tips ---
                 Text(
-                    "提示: 请确保已授予录音、蓝牙、通知权限。\n小米手机需在设置中开启自启动权限。",
+                    "提示: 请确保已授予录音、蓝牙、通知权限。\n" +
+                    "小米手机需在设置中开启自启动权限，否则后台被杀。\n" +
+                    "开启\"仅蓝牙耳机播放\"后，未连接蓝牙时不会播放，点\"试听\"可立即验证录音。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun FrequencyOption(
+        selected: Boolean,
+        onSelect: () -> Unit,
+        title: String,
+        detail: String
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            RadioButton(selected = selected, onClick = onSelect)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(title)
+                Text(
+                    detail,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -245,9 +333,43 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(perms.toTypedArray())
     }
 
+    private fun isBluetoothConnected(): Boolean {
+        val bm = getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = bm?.adapter ?: return false
+        if (!adapter.isEnabled) return false
+        return adapter.getProfileConnectionState(BluetoothProfile.HEADSET) ==
+                BluetoothAdapter.STATE_CONNECTED
+    }
+
+    private fun saveSettings(
+        repeatCount: Int,
+        intervalSeconds: Int,
+        frequencyPreset: String,
+        bluetoothOnly: Boolean,
+        serviceEnabled: Boolean
+    ) {
+        val min = settings.presetMinMinutes(frequencyPreset)
+        val max = settings.presetMaxMinutes(frequencyPreset)
+        settings.repeatCount = repeatCount
+        settings.intervalSeconds = intervalSeconds
+        settings.frequencyPreset = frequencyPreset
+        settings.randomMinMinutes = min
+        settings.randomMaxMinutes = max
+        settings.bluetoothOnly = bluetoothOnly
+
+        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
+
+        // 若服务运行中，重启以应用新的调度间隔
+        if (serviceEnabled) {
+            stopPlaybackService()
+            startPlaybackService()
+        }
+    }
+
     private fun startRecording() {
         try {
             val file = settings.getRecordingFile(this)
+            file.delete()
             recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
@@ -282,20 +404,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun deleteRecording() {
+        try {
+            val ok = settings.deleteRecording(this)
+            Toast.makeText(
+                this,
+                if (ok) "录音已删除" else "删除失败",
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun playTest() {
         try {
             val file = settings.getRecordingFile(this)
-            if (file.exists()) {
-                player?.release()
-                player = MediaPlayer().apply {
-                    setDataSource(file.path)
-                    prepare()
-                    setOnCompletionListener { release() }
-                    start()
-                }
+            if (!file.exists()) {
+                Toast.makeText(this, "请先录音", Toast.LENGTH_SHORT).show()
+                return
+            }
+            player?.release()
+            player = MediaPlayer().apply {
+                setDataSource(file.path)
+                prepare()
+                setOnCompletionListener { release() }
+                start()
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "播放失败", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "播放失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
