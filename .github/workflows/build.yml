@@ -28,6 +28,9 @@ jobs:
           unzip -q gradle-8.5-bin.zip
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
