@@ -81,39 +81,38 @@ class PlaybackService : Service() {
 
         var currentRepeat = 0
 
-        val playOnce = object : Runnable {
-            override fun run() {
-                try {
-                    mediaPlayer?.release()
-                    mediaPlayer = MediaPlayer().apply {
-                        setDataSource(recordingFile.path)
-                        prepare()
-                        setOnCompletionListener {
-                            release()
-                            mediaPlayer = null
-                            currentRepeat++
-                            if (currentRepeat < repeatCount) {
-                                handler.postDelayed(this, intervalMs)
-                            } else {
-                                scheduleNextPlay()
-                            }
+        fun playOnce() {
+            try {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(recordingFile.path)
+                    prepare()
+                    setOnCompletionListener {
+                        release()
+                        mediaPlayer = null
+                        currentRepeat++
+                        if (currentRepeat < repeatCount) {
+                            handler.postDelayed({ playOnce() }, intervalMs)
+                        } else {
+                            scheduleNextPlay()
                         }
-                        start()
                     }
-                } catch (e: Exception) {
-                    scheduleNextPlay()
+                    start()
                 }
+            } catch (e: Exception) {
+                scheduleNextPlay()
             }
         }
 
-        playOnce.run()
+        playOnce()
     }
 
     private fun scheduleNextPlay() {
         val minMs = settings.randomMinMinutes.toLong() * 60 * 1000
         val maxMs = settings.randomMaxMinutes.toLong() * 60 * 1000
         val range = (maxMs - minMs).coerceAtLeast(1)
-        val delay = minMs + Random().nextLong(range)
+        val rand = Random()
+        val delay = minMs + (rand.nextDouble() * range).toLong()
 
         val triggerTime = System.currentTimeMillis() + delay
 
