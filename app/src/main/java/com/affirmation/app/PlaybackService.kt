@@ -169,7 +169,7 @@ class PlaybackService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "信念播放器",
+                "习惯养成",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "后台播放服务"
@@ -194,7 +194,7 @@ class PlaybackService : Service() {
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("信念播放器")
+            .setContentTitle("习惯养成")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pendingIntent)

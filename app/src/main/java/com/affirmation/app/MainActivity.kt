@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -25,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
@@ -66,6 +68,8 @@ class MainActivity : ComponentActivity() {
         var scheduleMode by remember { mutableStateOf(settings.scheduleMode) }
         var customMinMinutes by remember { mutableStateOf(settings.randomMinMinutes) }
         var customMaxMinutes by remember { mutableStateOf(settings.randomMaxMinutes) }
+        var customMinText by remember { mutableStateOf(settings.randomMinMinutes.toString()) }
+        var customMaxText by remember { mutableStateOf(settings.randomMaxMinutes.toString()) }
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
         var isRecording by remember { mutableStateOf(false) }
         var hasRecording by remember { mutableStateOf(settings.hasRecording) }
@@ -77,7 +81,7 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("信念播放器") },
+                    title = { Text("习惯养成") },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
@@ -227,26 +231,67 @@ class MainActivity : ComponentActivity() {
                         } else {
                             HorizontalDivider()
                             Text("自定义间隔（分钟）", style = MaterialTheme.typography.titleMedium)
-                            Text("最小间隔: ${customMinMinutes}分钟")
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("最小间隔", modifier = Modifier.width(72.dp))
+                                OutlinedTextField(
+                                    value = customMinText,
+                                    onValueChange = { txt ->
+                                        customMinText = txt.filter { it.isDigit() }
+                                        val v = customMinText.toIntOrNull() ?: 1
+                                        customMinMinutes = v.coerceIn(1, 480)
+                                        dirty = true
+                                    },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.width(72.dp)
+                                )
+                                Text("分钟", modifier = Modifier.padding(start = 4.dp))
+                            }
                             Slider(
                                 value = customMinMinutes.toFloat(),
                                 onValueChange = {
                                     customMinMinutes = it.toInt().coerceAtMost(customMaxMinutes)
+                                    customMinText = customMinMinutes.toString()
                                     dirty = true
                                 },
                                 valueRange = 1f..480f,
                                 steps = 479
                             )
-                            Text("最大间隔: ${customMaxMinutes}分钟")
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("最大间隔", modifier = Modifier.width(72.dp))
+                                OutlinedTextField(
+                                    value = customMaxText,
+                                    onValueChange = { txt ->
+                                        customMaxText = txt.filter { it.isDigit() }
+                                        val v = customMaxText.toIntOrNull() ?: 1
+                                        customMaxMinutes = v.coerceIn(1, 480)
+                                        dirty = true
+                                    },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.width(72.dp)
+                                )
+                                Text("分钟", modifier = Modifier.padding(start = 4.dp))
+                            }
                             Slider(
                                 value = customMaxMinutes.toFloat(),
                                 onValueChange = {
                                     customMaxMinutes = it.toInt().coerceAtLeast(customMinMinutes)
+                                    customMaxText = customMaxMinutes.toString()
                                     dirty = true
                                 },
                                 valueRange = 1f..480f,
                                 steps = 479
                             )
+
                             Text(
                                 "随机在 ${customMinMinutes}-${customMaxMinutes} 分钟之间触发一次播放",
                                 style = MaterialTheme.typography.bodySmall,
