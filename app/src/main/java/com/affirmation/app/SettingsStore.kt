@@ -45,10 +45,6 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_SCHEDULE_MODE, "random") ?: "random"
         set(value) = prefs.edit().putString(KEY_SCHEDULE_MODE, value).apply()
 
-    var fixedTimes: Set<String>
-        get() = prefs.getStringSet(KEY_FIXED_TIMES, emptySet()) ?: emptySet()
-        set(value) = prefs.edit().putStringSet(KEY_FIXED_TIMES, value).apply()
-
     fun getRecordingFile(context: Context): File {
         return File(context.filesDir, "recording.m4a")
     }
@@ -82,6 +78,5 @@ class SettingsStore(context: Context) {
         private const val KEY_HAS_RECORDING = "has_recording"
         private const val KEY_FREQUENCY_PRESET = "frequency_preset"
         private const val KEY_SCHEDULE_MODE = "schedule_mode"
-        private const val KEY_FIXED_TIMES = "fixed_times"
     }
 }

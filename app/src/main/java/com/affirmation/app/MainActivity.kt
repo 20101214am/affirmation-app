@@ -7,11 +7,9 @@ import android.bluetooth.BluetoothProfile
 import android.content.Intent
 import android.media.MediaPlayer
 import android.media.MediaRecorder
-import android.app.TimePickerDialog
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,7 +64,8 @@ class MainActivity : ComponentActivity() {
         var intervalSeconds by remember { mutableStateOf(settings.intervalSeconds) }
         var frequencyPreset by remember { mutableStateOf(settings.frequencyPreset) }
         var scheduleMode by remember { mutableStateOf(settings.scheduleMode) }
-        var fixedTimes by remember { mutableStateOf(settings.fixedTimes) }
+        var customMinMinutes by remember { mutableStateOf(settings.randomMinMinutes) }
+        var customMaxMinutes by remember { mutableStateOf(settings.randomMaxMinutes) }
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
         var isRecording by remember { mutableStateOf(false) }
         var hasRecording by remember { mutableStateOf(settings.hasRecording) }
@@ -193,15 +192,15 @@ class MainActivity : ComponentActivity() {
                                 onClick = { scheduleMode = "random"; dirty = true }
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("随机间隔")
+                            Text("预设频率")
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
-                                selected = scheduleMode == "fixed",
-                                onClick = { scheduleMode = "fixed"; dirty = true }
+                                selected = scheduleMode == "custom",
+                                onClick = { scheduleMode = "custom"; dirty = true }
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("固定时间")
+                            Text("自定义间隔")
                         }
 
                         if (scheduleMode == "random") {
@@ -227,46 +226,32 @@ class MainActivity : ComponentActivity() {
                             )
                         } else {
                             HorizontalDivider()
-                            Text("每天固定时间播放", style = MaterialTheme.typography.titleMedium)
-                            if (fixedTimes.isEmpty()) {
-                                Text(
-                                    "尚未添加时间，请点击下方按钮添加",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            } else {
-                                fixedTimes.sorted().forEach { t ->
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(t, modifier = Modifier.weight(1f))
-                                        IconButton(
-                                            onClick = {
-                                                fixedTimes = fixedTimes - t
-                                                dirty = true
-                                            }
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = "删除时间",
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            Button(
-                                onClick = {
-                                    showTimePicker { picked ->
-                                        fixedTimes = fixedTimes + picked
-                                        dirty = true
-                                    }
+                            Text("自定义间隔（分钟）", style = MaterialTheme.typography.titleMedium)
+                            Text("最小间隔: ${customMinMinutes}分钟")
+                            Slider(
+                                value = customMinMinutes.toFloat(),
+                                onValueChange = {
+                                    customMinMinutes = it.toInt().coerceAtMost(customMaxMinutes)
+                                    dirty = true
                                 },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("添加播放时间")
-                            }
+                                valueRange = 1f..480f,
+                                steps = 479
+                            )
+                            Text("最大间隔: ${customMaxMinutes}分钟")
+                            Slider(
+                                value = customMaxMinutes.toFloat(),
+                                onValueChange = {
+                                    customMaxMinutes = it.toInt().coerceAtLeast(customMinMinutes)
+                                    dirty = true
+                                },
+                                valueRange = 1f..480f,
+                                steps = 479
+                            )
+                            Text(
+                                "随机在 ${customMinMinutes}-${customMaxMinutes} 分钟之间触发一次播放",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
                         }
 
                         HorizontalDivider()
@@ -302,7 +287,8 @@ class MainActivity : ComponentActivity() {
                             intervalSeconds = intervalSeconds,
                             frequencyPreset = frequencyPreset,
                             scheduleMode = scheduleMode,
-                            fixedTimes = fixedTimes,
+                            customMinMinutes = customMinMinutes,
+                            customMaxMinutes = customMaxMinutes,
                             bluetoothOnly = bluetoothOnly,
                             serviceEnabled = serviceEnabled
                         )
@@ -410,39 +396,31 @@ class MainActivity : ComponentActivity() {
                 BluetoothAdapter.STATE_CONNECTED
     }
 
-    private fun showTimePicker(onPicked: (String) -> Unit) {
-        val cal = Calendar.getInstance()
-        TimePickerDialog(
-            this,
-            { _, hour, minute ->
-                val hh = hour.toString().padStart(2, '0')
-                val mm = minute.toString().padStart(2, '0')
-                onPicked("$hh:$mm")
-            },
-            cal.get(Calendar.HOUR_OF_DAY),
-            cal.get(Calendar.MINUTE),
-            true
-        ).show()
-    }
-
     private fun saveSettings(
         repeatCount: Int,
         intervalSeconds: Int,
         frequencyPreset: String,
         scheduleMode: String,
-        fixedTimes: Set<String>,
+        customMinMinutes: Int,
+        customMaxMinutes: Int,
         bluetoothOnly: Boolean,
         serviceEnabled: Boolean
     ) {
-        val min = settings.presetMinMinutes(frequencyPreset)
-        val max = settings.presetMaxMinutes(frequencyPreset)
+        val min: Int
+        val max: Int
+        if (scheduleMode == "custom") {
+            min = customMinMinutes.coerceAtMost(customMaxMinutes)
+            max = customMaxMinutes.coerceAtLeast(customMinMinutes)
+        } else {
+            min = settings.presetMinMinutes(frequencyPreset)
+            max = settings.presetMaxMinutes(frequencyPreset)
+        }
         settings.repeatCount = repeatCount
         settings.intervalSeconds = intervalSeconds
         settings.frequencyPreset = frequencyPreset
         settings.randomMinMinutes = min
         settings.randomMaxMinutes = max
         settings.scheduleMode = scheduleMode
-        settings.fixedTimes = fixedTimes
         settings.bluetoothOnly = bluetoothOnly
 
         Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
