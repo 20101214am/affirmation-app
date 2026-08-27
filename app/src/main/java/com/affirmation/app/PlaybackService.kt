@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
+import java.util.Calendar
 import java.util.Random
 
 class PlaybackService : Service() {
@@ -27,6 +28,8 @@ class PlaybackService : Service() {
         const val ACTION_PLAY = "com.affirmation.app.ACTION_PLAY"
         const val ACTION_START = "com.affirmation.app.ACTION_START"
         private const val RETRY_DELAY_MS = 5 * 60 * 1000L
+        private const val DAY_START_HOUR = 7
+        private const val DAY_END_HOUR = 23
     }
 
     private lateinit var settings: SettingsStore
@@ -41,6 +44,7 @@ class PlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification())
+        ensureScheduled()
 
         when (intent?.action) {
             ACTION_PLAY -> handlePlayTrigger()
@@ -50,32 +54,38 @@ class PlaybackService : Service() {
         return START_STICKY
     }
 
+    // 服务首次启动时，给尚未排期的轨道一个初始触发时间（1 分钟内随机）
+    private fun ensureScheduled() {
+        val now = System.currentTimeMillis()
+        settings.enabledTracks.forEach { track ->
+            if (settings.getNextPlayTime(track.id) <= now) {
+                settings.setNextPlayTime(track.id, now + Random().nextInt(60_000))
+            }
+        }
+    }
+
     private fun handlePlayTrigger() {
         if (!shouldPlay()) {
-            // 条件不满足（如未连蓝牙），短间隔重试，避免用户连上蓝牙后还要等很久
+            // 未连蓝牙且开启了仅蓝牙播放，短时重试，避免连上后要等很久
             scheduleRetrySoon()
             return
         }
-        playAffirmation()
+        val track = pickDueTrack() ?: run {
+            scheduleNextPlay()
+            return
+        }
+        playAffirmation(track)
+    }
+
+    private fun pickDueTrack(): TrackConfig? {
+        val candidates = settings.enabledTracks
+        if (candidates.isEmpty()) return null
+        return candidates.minByOrNull { settings.getNextPlayTime(it.id) }
     }
 
     private fun scheduleRetrySoon() {
         val triggerTime = System.currentTimeMillis() + RETRY_DELAY_MS
-        val intent = Intent(this, PlaybackService::class.java).apply {
-            action = ACTION_PLAY
-        }
-        val pendingIntent = PendingIntent.getService(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        try {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-            )
-        } catch (e: SecurityException) {
-            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        }
+        setAlarm(triggerTime, makePendingIntent())
     }
 
     private fun shouldPlay(): Boolean {
@@ -90,15 +100,16 @@ class PlaybackService : Service() {
         return adapter.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothAdapter.STATE_CONNECTED
     }
 
-    private fun playAffirmation() {
-        val recordingFile = settings.getRecordingFile(this)
+    private fun playAffirmation(track: TrackConfig) {
+        val recordingFile = settings.getRecordingFile(this, track.id)
         if (!recordingFile.exists()) {
+            settings.setNextPlayTime(track.id, System.currentTimeMillis())
             scheduleNextPlay()
             return
         }
 
-        val repeatCount = settings.repeatCount
-        val intervalMs = settings.intervalSeconds.toLong() * 1000
+        val repeatCount = track.repeatCount
+        val intervalMs = track.intervalSeconds.toLong() * 1000
 
         var currentRepeat = 0
 
@@ -115,36 +126,70 @@ class PlaybackService : Service() {
                         if (currentRepeat < repeatCount) {
                             handler.postDelayed({ playOnce() }, intervalMs)
                         } else {
-                            reschedule()
+                            rescheduleTrack(track)
                         }
                     }
                     start()
                 }
             } catch (e: Exception) {
-                reschedule()
+                rescheduleTrack(track)
             }
         }
 
         playOnce()
     }
 
-    private fun scheduleNextPlay() {
-        val minMs = settings.randomMinMinutes.toLong() * 60 * 1000
-        val maxMs = settings.randomMaxMinutes.toLong() * 60 * 1000
+    private fun rescheduleTrack(track: TrackConfig) {
+        val next = computeNextTime(track)
+        settings.setNextPlayTime(track.id, next)
+        scheduleNextPlay()
+    }
+
+    // 按本轨道自己的频率档位/自定义区间计算下次触发时间，并约束在白天时段
+    private fun computeNextTime(track: TrackConfig): Long {
+        val minMs = track.randomMinMinutes.toLong() * 60 * 1000
+        val maxMs = track.randomMaxMinutes.toLong() * 60 * 1000
         val range = (maxMs - minMs).coerceAtLeast(1)
-        val rand = Random()
-        val delay = minMs + (rand.nextDouble() * range).toLong()
+        val delay = minMs + (Random().nextDouble() * range).toLong()
+        return clampToDaytime(System.currentTimeMillis() + delay)
+    }
 
-        val triggerTime = System.currentTimeMillis() + delay
+    // 夜间（23:00-07:00）不播放，顺延到次日早晨
+    private fun clampToDaytime(ms: Long): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = ms }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        if (hour < DAY_START_HOUR || hour >= DAY_END_HOUR) {
+            cal.add(Calendar.DAY_OF_MONTH, 1)
+            cal.set(Calendar.HOUR_OF_DAY, DAY_START_HOUR)
+            cal.set(Calendar.MINUTE, Random().nextInt(DAY_END_HOUR - DAY_START_HOUR))
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
+    }
 
+    private fun scheduleNextPlay() {
+        val candidates = settings.enabledTracks
+        val triggerTime = if (candidates.isEmpty()) {
+            System.currentTimeMillis() + 60 * 60 * 1000L
+        } else {
+            candidates.minOf { settings.getNextPlayTime(it.id) }
+                .coerceAtLeast(System.currentTimeMillis())
+        }
+        setAlarm(triggerTime, makePendingIntent())
+    }
+
+    private fun makePendingIntent(): PendingIntent {
         val intent = Intent(this, PlaybackService::class.java).apply {
             action = ACTION_PLAY
         }
-        val pendingIntent = PendingIntent.getService(
+        return PendingIntent.getService(
             this, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
 
+    private fun setAlarm(triggerTime: Long, pendingIntent: PendingIntent) {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         try {
             alarmManager.setExactAndAllowWhileIdle(
@@ -159,10 +204,6 @@ class PlaybackService : Service() {
                 pendingIntent
             )
         }
-    }
-
-    private fun reschedule() {
-        scheduleNextPlay()
     }
 
     private fun createNotificationChannel() {
@@ -186,11 +227,11 @@ class PlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val modeText = if (settings.scheduleMode == "custom") "自定义间隔模式" else "预设频率模式"
+        val activeCount = settings.enabledTracks.size
         val statusText = if (settings.bluetoothOnly && !isBluetoothHeadsetConnected()) {
             "服务运行中，未连接蓝牙，等待连接后播放"
         } else {
-            "服务运行中（$modeText），等待下次播放"
+            "服务运行中，已启用 $activeCount 条内容"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)

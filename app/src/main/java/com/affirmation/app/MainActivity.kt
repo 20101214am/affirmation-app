@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
@@ -26,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
@@ -58,26 +60,63 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Composable
     @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
     private fun AppContent() {
         var serviceEnabled by remember { mutableStateOf(settings.serviceEnabled) }
-        var repeatCount by remember { mutableStateOf(settings.repeatCount) }
-        var intervalSeconds by remember { mutableStateOf(settings.intervalSeconds) }
-        var frequencyPreset by remember { mutableStateOf(settings.frequencyPreset) }
-        var scheduleMode by remember { mutableStateOf(settings.scheduleMode) }
-        var customMinMinutes by remember { mutableStateOf(settings.randomMinMinutes) }
-        var customMaxMinutes by remember { mutableStateOf(settings.randomMaxMinutes) }
-        var customMinText by remember { mutableStateOf(settings.randomMinMinutes.toString()) }
-        var customMaxText by remember { mutableStateOf(settings.randomMaxMinutes.toString()) }
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
-        var isRecording by remember { mutableStateOf(false) }
-        var hasRecording by remember { mutableStateOf(settings.hasRecording) }
-        var bluetoothConnected by remember { mutableStateOf(isBluetoothConnected()) }
+        var tracks by remember { mutableStateOf(settings.tracks) }
+        var selectedId by remember { mutableStateOf<String?>(null) }
 
-        // 设置是否被修改（用于提示先保存）
-        var dirty by remember { mutableStateOf(false) }
+        if (selectedId == null) {
+            ListScreen(
+                serviceEnabled = serviceEnabled,
+                bluetoothOnly = bluetoothOnly,
+                tracks = tracks,
+                onToggleService = { enabled ->
+                    serviceEnabled = enabled
+                    settings.serviceEnabled = enabled
+                    if (enabled) startPlaybackService() else stopPlaybackService()
+                },
+                onToggleBluetooth = { value ->
+                    bluetoothOnly = value
+                    settings.bluetoothOnly = value
+                    if (serviceEnabled) {
+                        stopPlaybackService()
+                        startPlaybackService()
+                    }
+                },
+                onOpenTrack = { selectedId = it }
+            )
+        } else {
+            val track = tracks.first { it.id == selectedId }
+            TrackDetail(
+                track = track,
+                onBack = {
+                    selectedId = null
+                    tracks = settings.tracks
+                },
+                onSaved = {
+                    tracks = settings.tracks
+                    if (settings.serviceEnabled) {
+                        stopPlaybackService()
+                        startPlaybackService()
+                    }
+                }
+            )
+        }
+    }
 
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun ListScreen(
+        serviceEnabled: Boolean,
+        bluetoothOnly: Boolean,
+        tracks: List<TrackConfig>,
+        onToggleService: (Boolean) -> Unit,
+        onToggleBluetooth: (Boolean) -> Unit,
+        onOpenTrack: (String) -> Unit
+    ) {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -96,6 +135,170 @@ class MainActivity : ComponentActivity() {
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("启用播放", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (serviceEnabled) "服务运行中" else "已停止",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (serviceEnabled) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Switch(checked = serviceEnabled, onCheckedChange = onToggleService)
+                    }
+                }
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("仅蓝牙耳机播放")
+                            Text(
+                                if (isBluetoothConnected()) "已连接蓝牙" else "未连接蓝牙",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isBluetoothConnected()) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Switch(checked = bluetoothOnly, onCheckedChange = onToggleBluetooth)
+                    }
+                }
+
+                Text("三条内容（点击进入单独设置）", style = MaterialTheme.typography.titleMedium)
+                tracks.forEach { track ->
+                    TrackCard(track = track, onClick = { onOpenTrack(track.id) })
+                }
+
+                Text(
+                    "提示: 请确保已授予录音、蓝牙、通知权限。\n" +
+                            "小米手机需在设置中开启自启动权限，否则后台被杀。\n" +
+                            "开启\"仅蓝牙耳机播放\"后，未连接蓝牙不会播放，点\"试听\"可立即验证录音。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun TrackCard(track: TrackConfig, onClick: () -> Unit) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onClick
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(track.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        buildString {
+                            append(if (track.enabled) "已开启" else "已关闭")
+                            append(" · ")
+                            append(if (track.hasRecording) "已录音" else "未录音")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                if (track.enabled && track.hasRecording) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun TrackDetail(
+        track: TrackConfig,
+        onBack: () -> Unit,
+        onSaved: () -> Unit
+    ) {
+        val focusManager = LocalFocusManager.current
+        var enabled by remember { mutableStateOf(track.enabled) }
+        var hasRecording by remember { mutableStateOf(track.hasRecording) }
+        var isRecording by remember { mutableStateOf(false) }
+        var repeatCount by remember { mutableStateOf(track.repeatCount) }
+        var intervalSeconds by remember { mutableStateOf(track.intervalSeconds) }
+        var scheduleMode by remember { mutableStateOf(track.scheduleMode) }
+        var frequencyPreset by remember { mutableStateOf(track.frequencyPreset) }
+        var customMinMinutes by remember { mutableStateOf(track.randomMinMinutes) }
+        var customMaxMinutes by remember { mutableStateOf(track.randomMaxMinutes) }
+        var customMinText by remember { mutableStateOf(track.randomMinMinutes.toString()) }
+        var customMaxText by remember { mutableStateOf(track.randomMaxMinutes.toString()) }
+        var dirty by remember { mutableStateOf(false) }
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(track.name) },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            focusManager.clearFocus()
+                            onBack()
+                        }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回"
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
+            }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("开启此条", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (enabled) "将参与循环播放" else "不参与播放",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Switch(checked = enabled, onCheckedChange = {
+                            enabled = it
+                            dirty = true
+                        })
+                    }
+                }
+
                 // --- Recording Section ---
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -108,7 +311,7 @@ class MainActivity : ComponentActivity() {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("已录音", color = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.width(12.dp))
-                                Button(onClick = { playTest() }) {
+                                Button(onClick = { playTest(track.id) }) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
                                     Text("试听")
@@ -116,8 +319,9 @@ class MainActivity : ComponentActivity() {
                                 Spacer(Modifier.width(8.dp))
                                 Button(
                                     onClick = {
-                                        deleteRecording()
+                                        deleteRecording(track.id)
                                         hasRecording = false
+                                        dirty = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.error
@@ -135,11 +339,11 @@ class MainActivity : ComponentActivity() {
                         Button(
                             onClick = {
                                 if (isRecording) {
-                                    stopRecording()
+                                    stopRecording(track.id)
                                     isRecording = false
-                                    hasRecording = settings.hasRecording
+                                    hasRecording = settings.getTrack(track.id).hasRecording
                                 } else {
-                                    startRecording()
+                                    startRecording(track.id)
                                     isRecording = true
                                 }
                             },
@@ -298,47 +502,37 @@ class MainActivity : ComponentActivity() {
                                 color = MaterialTheme.colorScheme.outline
                             )
                         }
-
-                        HorizontalDivider()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("仅蓝牙耳机播放")
-                                Text(
-                                    if (bluetoothConnected) "已连接蓝牙" else "未连接蓝牙",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (bluetoothConnected) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.outline
-                                )
-                            }
-                            Switch(
-                                checked = bluetoothOnly,
-                                onCheckedChange = {
-                                    bluetoothOnly = it
-                                    dirty = true
-                                }
-                            )
-                        }
                     }
                 }
 
                 // --- Save Button ---
                 Button(
                     onClick = {
-                        saveSettings(
-                            repeatCount = repeatCount,
-                            intervalSeconds = intervalSeconds,
-                            frequencyPreset = frequencyPreset,
-                            scheduleMode = scheduleMode,
-                            customMinMinutes = customMinMinutes,
-                            customMaxMinutes = customMaxMinutes,
-                            bluetoothOnly = bluetoothOnly,
-                            serviceEnabled = serviceEnabled
+                        val min: Int
+                        val max: Int
+                        if (scheduleMode == "custom") {
+                            min = customMinMinutes.coerceAtMost(customMaxMinutes)
+                            max = customMaxMinutes.coerceAtLeast(customMinMinutes)
+                        } else {
+                            min = settings.presetMinMinutes(frequencyPreset)
+                            max = settings.presetMaxMinutes(frequencyPreset)
+                        }
+                        settings.saveTrack(
+                            track.copy(
+                                enabled = enabled,
+                                hasRecording = hasRecording,
+                                repeatCount = repeatCount,
+                                intervalSeconds = intervalSeconds,
+                                scheduleMode = scheduleMode,
+                                frequencyPreset = frequencyPreset,
+                                randomMinMinutes = min,
+                                randomMaxMinutes = max
+                            )
                         )
                         dirty = false
-                        bluetoothConnected = isBluetoothConnected()
+                        focusManager.clearFocus()
+                        Toast.makeText(this@MainActivity, "已保存", Toast.LENGTH_SHORT).show()
+                        onSaved()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -353,47 +547,6 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-
-                // --- Master Switch ---
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("启用播放", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                if (serviceEnabled) "服务运行中" else "已停止",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (serviceEnabled) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Switch(
-                            checked = serviceEnabled,
-                            onCheckedChange = { enabled ->
-                                serviceEnabled = enabled
-                                settings.serviceEnabled = enabled
-                                if (enabled) {
-                                    startPlaybackService()
-                                } else {
-                                    stopPlaybackService()
-                                }
-                            }
-                        )
-                    }
-                }
-
-                // --- Tips ---
-                Text(
-                    "提示: 请确保已授予录音、蓝牙、通知权限。\n" +
-                    "小米手机需在设置中开启自启动权限，否则后台被杀。\n" +
-                    "开启\"仅蓝牙耳机播放\"后，未连接蓝牙时不会播放，点\"试听\"可立即验证录音。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
             }
         }
     }
@@ -441,45 +594,9 @@ class MainActivity : ComponentActivity() {
                 BluetoothAdapter.STATE_CONNECTED
     }
 
-    private fun saveSettings(
-        repeatCount: Int,
-        intervalSeconds: Int,
-        frequencyPreset: String,
-        scheduleMode: String,
-        customMinMinutes: Int,
-        customMaxMinutes: Int,
-        bluetoothOnly: Boolean,
-        serviceEnabled: Boolean
-    ) {
-        val min: Int
-        val max: Int
-        if (scheduleMode == "custom") {
-            min = customMinMinutes.coerceAtMost(customMaxMinutes)
-            max = customMaxMinutes.coerceAtLeast(customMinMinutes)
-        } else {
-            min = settings.presetMinMinutes(frequencyPreset)
-            max = settings.presetMaxMinutes(frequencyPreset)
-        }
-        settings.repeatCount = repeatCount
-        settings.intervalSeconds = intervalSeconds
-        settings.frequencyPreset = frequencyPreset
-        settings.randomMinMinutes = min
-        settings.randomMaxMinutes = max
-        settings.scheduleMode = scheduleMode
-        settings.bluetoothOnly = bluetoothOnly
-
-        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
-
-        // 若服务运行中，重启以应用新的调度间隔
-        if (serviceEnabled) {
-            stopPlaybackService()
-            startPlaybackService()
-        }
-    }
-
-    private fun startRecording() {
+    private fun startRecording(trackId: String) {
         try {
-            val file = settings.getRecordingFile(this)
+            val file = settings.getRecordingFile(this, trackId)
             file.delete()
             recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
@@ -501,23 +618,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun stopRecording() {
+    private fun stopRecording(trackId: String) {
         try {
             recorder?.apply {
                 stop()
                 release()
             }
             recorder = null
-            settings.hasRecording = true
+            val t = settings.getTrack(trackId)
+            settings.saveTrack(t.copy(hasRecording = true))
         } catch (e: Exception) {
             recorder = null
             Toast.makeText(this, "停止录音失败", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun deleteRecording() {
+    private fun deleteRecording(trackId: String) {
         try {
-            val ok = settings.deleteRecording(this)
+            val ok = settings.deleteRecording(this, trackId)
             Toast.makeText(
                 this,
                 if (ok) "录音已删除" else "删除失败",
@@ -528,9 +646,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun playTest() {
+    private fun playTest(trackId: String) {
         try {
-            val file = settings.getRecordingFile(this)
+            val file = settings.getRecordingFile(this, trackId)
             if (!file.exists()) {
                 Toast.makeText(this, "请先录音", Toast.LENGTH_SHORT).show()
                 return

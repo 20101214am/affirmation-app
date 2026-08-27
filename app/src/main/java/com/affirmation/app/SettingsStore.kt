@@ -4,55 +4,81 @@ import android.content.Context
 import android.content.SharedPreferences
 import java.io.File
 
+data class TrackConfig(
+    val id: String,
+    val name: String,
+    val enabled: Boolean,
+    val hasRecording: Boolean,
+    val repeatCount: Int,
+    val intervalSeconds: Int,
+    val scheduleMode: String,
+    val frequencyPreset: String,
+    val randomMinMinutes: Int,
+    val randomMaxMinutes: Int
+)
+
 class SettingsStore(context: Context) {
 
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("affirmation_settings", Context.MODE_PRIVATE)
+        context.getSharedPreferences("habit_settings", Context.MODE_PRIVATE)
 
     var serviceEnabled: Boolean
         get() = prefs.getBoolean(KEY_SERVICE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_SERVICE_ENABLED, value).apply()
 
-    var repeatCount: Int
-        get() = prefs.getInt(KEY_REPEAT_COUNT, 3)
-        set(value) = prefs.edit().putInt(KEY_REPEAT_COUNT, value).apply()
-
-    var intervalSeconds: Int
-        get() = prefs.getInt(KEY_INTERVAL_SECONDS, 5)
-        set(value) = prefs.edit().putInt(KEY_INTERVAL_SECONDS, value).apply()
-
-    var randomMinMinutes: Int
-        get() = prefs.getInt(KEY_RANDOM_MIN, 30)
-        set(value) = prefs.edit().putInt(KEY_RANDOM_MIN, value).apply()
-
-    var randomMaxMinutes: Int
-        get() = prefs.getInt(KEY_RANDOM_MAX, 120)
-        set(value) = prefs.edit().putInt(KEY_RANDOM_MAX, value).apply()
-
     var bluetoothOnly: Boolean
         get() = prefs.getBoolean(KEY_BLUETOOTH_ONLY, true)
         set(value) = prefs.edit().putBoolean(KEY_BLUETOOTH_ONLY, value).apply()
 
-    var hasRecording: Boolean
-        get() = prefs.getBoolean(KEY_HAS_RECORDING, false)
-        set(value) = prefs.edit().putBoolean(KEY_HAS_RECORDING, value).apply()
+    val tracks: List<TrackConfig>
+        get() = TRACK_DEFS.map { def ->
+            TrackConfig(
+                id = def.first,
+                name = def.second,
+                enabled = prefs.getBoolean(key(def.first, "enabled"), true),
+                hasRecording = prefs.getBoolean(key(def.first, "has_recording"), false),
+                repeatCount = prefs.getInt(key(def.first, "repeat_count"), 3),
+                intervalSeconds = prefs.getInt(key(def.first, "interval_seconds"), 5),
+                scheduleMode = prefs.getString(key(def.first, "schedule_mode"), "random") ?: "random",
+                frequencyPreset = prefs.getString(key(def.first, "frequency_preset"), "medium") ?: "medium",
+                randomMinMinutes = prefs.getInt(key(def.first, "random_min"), 30),
+                randomMaxMinutes = prefs.getInt(key(def.first, "random_max"), 120)
+            )
+        }
 
-    var frequencyPreset: String
-        get() = prefs.getString(KEY_FREQUENCY_PRESET, "medium") ?: "medium"
-        set(value) = prefs.edit().putString(KEY_FREQUENCY_PRESET, value).apply()
+    fun getTrack(id: String): TrackConfig = tracks.first { it.id == id }
 
-    var scheduleMode: String
-        get() = prefs.getString(KEY_SCHEDULE_MODE, "random") ?: "random"
-        set(value) = prefs.edit().putString(KEY_SCHEDULE_MODE, value).apply()
+    val enabledTracks: List<TrackConfig>
+        get() = tracks.filter { it.enabled && it.hasRecording }
 
-    fun getRecordingFile(context: Context): File {
-        return File(context.filesDir, "recording.m4a")
+    fun getNextPlayTime(id: String): Long =
+        prefs.getLong(key(id, "next_play"), 0L)
+
+    fun setNextPlayTime(id: String, time: Long) =
+        prefs.edit().putLong(key(id, "next_play"), time).apply()
+
+    fun saveTrack(t: TrackConfig) {
+        prefs.edit().apply {
+            putBoolean(key(t.id, "enabled"), t.enabled)
+            putBoolean(key(t.id, "has_recording"), t.hasRecording)
+            putInt(key(t.id, "repeat_count"), t.repeatCount)
+            putInt(key(t.id, "interval_seconds"), t.intervalSeconds)
+            putString(key(t.id, "schedule_mode"), t.scheduleMode)
+            putString(key(t.id, "frequency_preset"), t.frequencyPreset)
+            putInt(key(t.id, "random_min"), t.randomMinMinutes)
+            putInt(key(t.id, "random_max"), t.randomMaxMinutes)
+            apply()
+        }
     }
 
-    fun deleteRecording(context: Context): Boolean {
-        val file = getRecordingFile(context)
+    fun getRecordingFile(context: Context, id: String): File {
+        return File(context.filesDir, "recording_$id.m4a")
+    }
+
+    fun deleteRecording(context: Context, id: String): Boolean {
+        val file = getRecordingFile(context, id)
         val deleted = if (file.exists()) file.delete() else true
-        hasRecording = false
+        prefs.edit().putBoolean(key(id, "has_recording"), false).apply()
         return deleted
     }
 
@@ -68,15 +94,15 @@ class SettingsStore(context: Context) {
         else -> 40
     }
 
+    private fun key(trackId: String, field: String) = "track_${trackId}_$field"
+
     companion object {
+        val TRACK_DEFS = listOf(
+            "break_bad" to "打破坏习惯",
+            "build_good" to "建立好习惯",
+            "positive" to "积极信念"
+        )
         private const val KEY_SERVICE_ENABLED = "service_enabled"
-        private const val KEY_REPEAT_COUNT = "repeat_count"
-        private const val KEY_INTERVAL_SECONDS = "interval_seconds"
-        private const val KEY_RANDOM_MIN = "random_min_minutes"
-        private const val KEY_RANDOM_MAX = "random_max_minutes"
         private const val KEY_BLUETOOTH_ONLY = "bluetooth_only"
-        private const val KEY_HAS_RECORDING = "has_recording"
-        private const val KEY_FREQUENCY_PRESET = "frequency_preset"
-        private const val KEY_SCHEDULE_MODE = "schedule_mode"
     }
 }
