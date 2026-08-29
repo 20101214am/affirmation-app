@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 
 class MainActivity : ComponentActivity() {
 
@@ -68,6 +69,12 @@ class MainActivity : ComponentActivity() {
         var bluetoothOnly by remember { mutableStateOf(settings.bluetoothOnly) }
         var tracks by remember { mutableStateOf(settings.tracks) }
         var selectedId by remember { mutableStateOf<String?>(null) }
+        var sleep1Enabled by remember { mutableStateOf(settings.sleep1Enabled) }
+        var sleep1Start by remember { mutableStateOf(settings.sleep1Start) }
+        var sleep1End by remember { mutableStateOf(settings.sleep1End) }
+        var sleep2Enabled by remember { mutableStateOf(settings.sleep2Enabled) }
+        var sleep2Start by remember { mutableStateOf(settings.sleep2Start) }
+        var sleep2End by remember { mutableStateOf(settings.sleep2End) }
 
         if (selectedId == null) {
             ListScreen(
@@ -82,10 +89,43 @@ class MainActivity : ComponentActivity() {
                 onToggleBluetooth = { value ->
                     bluetoothOnly = value
                     settings.bluetoothOnly = value
-                    if (serviceEnabled) {
-                        stopPlaybackService()
-                        startPlaybackService()
+                    restartServiceIfRunning()
+                },
+                sleep1Enabled = sleep1Enabled,
+                sleep1Start = sleep1Start,
+                sleep1End = sleep1End,
+                sleep2Enabled = sleep2Enabled,
+                sleep2Start = sleep2Start,
+                sleep2End = sleep2End,
+                onToggleSleep = { slot, enabled ->
+                    when (slot) {
+                        1 -> {
+                            sleep1Enabled = enabled
+                            settings.sleep1Enabled = enabled
+                        }
+                        else -> {
+                            sleep2Enabled = enabled
+                            settings.sleep2Enabled = enabled
+                        }
                     }
+                    restartServiceIfRunning()
+                },
+                onSetSleepTime = { slot, start, end ->
+                    when (slot) {
+                        1 -> {
+                            sleep1Start = start
+                            sleep1End = end
+                            settings.sleep1Start = start
+                            settings.sleep1End = end
+                        }
+                        else -> {
+                            sleep2Start = start
+                            sleep2End = end
+                            settings.sleep2Start = start
+                            settings.sleep2End = end
+                        }
+                    }
+                    restartServiceIfRunning()
                 },
                 onOpenTrack = { selectedId = it }
             )
@@ -116,6 +156,14 @@ class MainActivity : ComponentActivity() {
         tracks: List<TrackConfig>,
         onToggleService: (Boolean) -> Unit,
         onToggleBluetooth: (Boolean) -> Unit,
+        sleep1Enabled: Boolean,
+        sleep1Start: Int,
+        sleep1End: Int,
+        sleep2Enabled: Boolean,
+        sleep2Start: Int,
+        sleep2End: Int,
+        onToggleSleep: (Int, Boolean) -> Unit,
+        onSetSleepTime: (Int, Int, Int) -> Unit,
         onOpenTrack: (String) -> Unit
     ) {
         Scaffold(
@@ -176,6 +224,17 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                SleepPeriodCard(
+                    s1Enabled = sleep1Enabled,
+                    s1Start = sleep1Start,
+                    s1End = sleep1End,
+                    s2Enabled = sleep2Enabled,
+                    s2Start = sleep2Start,
+                    s2End = sleep2End,
+                    onToggleSleep = onToggleSleep,
+                    onSetSleepTime = onSetSleepTime
+                )
+
                 tracks.forEach { track ->
                     TrackCard(track = track, onClick = { onOpenTrack(track.id) })
                 }
@@ -187,6 +246,146 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun SleepPeriodCard(
+        s1Enabled: Boolean,
+        s1Start: Int,
+        s1End: Int,
+        s2Enabled: Boolean,
+        s2Start: Int,
+        s2End: Int,
+        onToggleSleep: (Int, Boolean) -> Unit,
+        onSetSleepTime: (Int, Int, Int) -> Unit
+    ) {
+        // Triple(时段序号, 0=起始/1=结束, 当前分钟数)
+        var picker by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("休眠时段", style = MaterialTheme.typography.titleMedium)
+
+                SleepRow(
+                    label = "休眠时段一",
+                    enabled = s1Enabled,
+                    start = s1Start,
+                    end = s1End,
+                    onToggle = { onToggleSleep(1, it) },
+                    onPickStart = { picker = Triple(1, 0, s1Start) },
+                    onPickEnd = { picker = Triple(1, 1, s1End) }
+                )
+
+                SleepRow(
+                    label = "休眠时段二",
+                    enabled = s2Enabled,
+                    start = s2Start,
+                    end = s2End,
+                    onToggle = { onToggleSleep(2, it) },
+                    onPickStart = { picker = Triple(2, 0, s2Start) },
+                    onPickEnd = { picker = Triple(2, 1, s2End) }
+                )
+
+                Text(
+                    "时段内不触发也不播放，闹钟自动顺延到时段结束。" +
+                            "跨午夜时让起始晚于结束即可，例如 22:30 到 07:00。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+
+        picker?.let { (slot, which, minutes) ->
+            TimePickerDialog(
+                title = if (which == 0) "设置开始时间" else "设置结束时间",
+                initialMinutes = minutes,
+                onConfirm = { newMin ->
+                    if (slot == 1) {
+                        if (which == 0) onSetSleepTime(1, newMin, s1End)
+                        else onSetSleepTime(1, s1Start, newMin)
+                    } else {
+                        if (which == 0) onSetSleepTime(2, newMin, s2End)
+                        else onSetSleepTime(2, s2Start, newMin)
+                    }
+                    picker = null
+                },
+                onDismiss = { picker = null }
+            )
+        }
+    }
+
+    @Composable
+    private fun SleepRow(
+        label: String,
+        enabled: Boolean,
+        start: Int,
+        end: Int,
+        onToggle: (Boolean) -> Unit,
+        onPickStart: () -> Unit,
+        onPickEnd: () -> Unit
+    ) {
+        val textColor = if (enabled) MaterialTheme.colorScheme.onSurface
+        else MaterialTheme.colorScheme.outline
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Switch(checked = enabled, onCheckedChange = onToggle)
+            Spacer(Modifier.width(8.dp))
+            Text(label, modifier = Modifier.weight(1f), color = textColor)
+            TextButton(onClick = onPickStart, enabled = enabled) {
+                Text(formatTime(start))
+            }
+            Text("→", color = textColor)
+            TextButton(onClick = onPickEnd, enabled = enabled) {
+                Text(formatTime(end))
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun TimePickerDialog(
+        title: String,
+        initialMinutes: Int,
+        onConfirm: (Int) -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        val state = rememberTimePickerState(
+            initialHour = initialMinutes / 60,
+            initialMinute = initialMinutes % 60,
+            is24Hour = true
+        )
+        Dialog(onDismissRequest = onDismiss) {
+            Surface(
+                shape = MaterialTheme.shapes.extraLarge,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(title, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(16.dp))
+                    TimePicker(state = state)
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
+                        TextButton(onClick = { onConfirm(state.hour * 60 + state.minute) }) {
+                            Text("确定")
+                        }
+                    }
+                }
             }
         }
     }
@@ -627,6 +826,18 @@ class MainActivity : ComponentActivity() {
         if (!adapter.isEnabled) return false
         return adapter.getProfileConnectionState(BluetoothProfile.HEADSET) ==
                 BluetoothAdapter.STATE_CONNECTED
+    }
+
+    // 全局设置改动后重启服务，让新的闹钟时间立刻生效
+    private fun restartServiceIfRunning() {
+        if (settings.serviceEnabled) {
+            stopPlaybackService()
+            startPlaybackService()
+        }
+    }
+
+    private fun formatTime(minutes: Int): String {
+        return String.format("%02d:%02d", minutes / 60, minutes % 60)
     }
 
     private fun startRecording(trackId: String) {

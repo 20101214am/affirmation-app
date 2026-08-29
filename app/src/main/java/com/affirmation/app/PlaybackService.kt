@@ -19,7 +19,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
-import java.util.Calendar
 import java.util.Random
 
 class PlaybackService : Service() {
@@ -30,8 +29,6 @@ class PlaybackService : Service() {
         const val ACTION_PLAY = "com.affirmation.app.ACTION_PLAY"
         const val ACTION_START = "com.affirmation.app.ACTION_START"
         private const val RETRY_DELAY_MS = 5 * 60 * 1000L
-        private const val DAY_START_HOUR = 7
-        private const val DAY_END_HOUR = 23
     }
 
     private lateinit var settings: SettingsStore
@@ -67,6 +64,13 @@ class PlaybackService : Service() {
     }
 
     private fun handlePlayTrigger() {
+        val now = System.currentTimeMillis()
+        if (settings.isInSleep(now)) {
+            // 休眠时段内不播放，闹钟顺延到休眠结束
+            setAlarm(settings.sleepEndMillis(now), makePendingIntent())
+            refreshNotification()
+            return
+        }
         if (!shouldPlay()) {
             // 未连蓝牙且开启了仅蓝牙播放，短时重试
             scheduleRetrySoon()
@@ -91,7 +95,12 @@ class PlaybackService : Service() {
     }
 
     private fun scheduleRetrySoon() {
-        val triggerTime = System.currentTimeMillis() + RETRY_DELAY_MS
+        val now = System.currentTimeMillis()
+        val triggerTime = if (settings.isInSleep(now)) {
+            settings.sleepEndMillis(now)
+        } else {
+            now + RETRY_DELAY_MS
+        }
         setAlarm(triggerTime, makePendingIntent())
     }
 
@@ -137,6 +146,13 @@ class PlaybackService : Service() {
         var currentRepeat = 0
 
         fun playOnce() {
+            if (settings.isInSleep()) {
+                // 播放途中进入休眠时段，停止本轮重复播放
+                mediaPlayer?.release()
+                mediaPlayer = null
+                rescheduleTrack(track)
+                return
+            }
             if (isInCall()) {
                 // 通话开始，停止本轮重复播放，稍后重试
                 mediaPlayer?.release()
@@ -175,36 +191,29 @@ class PlaybackService : Service() {
         scheduleNextPlay()
     }
 
-    // 按本轨道自己的频率档位/自定义区间计算下次触发时间，并约束在白天时段
+    // 按本轨道自己的频率档位/自定义区间计算下次触发时间
+    // 休眠约束不在此处理，统一由 scheduleNextPlay 设闹钟前拦截
     private fun computeNextTime(track: TrackConfig): Long {
         val minMs = track.randomMinMinutes.toLong() * 60 * 1000
         val maxMs = track.randomMaxMinutes.toLong() * 60 * 1000
         val range = (maxMs - minMs).coerceAtLeast(1)
         val delay = minMs + (Random().nextDouble() * range).toLong()
-        return clampToDaytime(System.currentTimeMillis() + delay)
-    }
-
-    // 夜间（23:00-07:00）不播放，顺延到次日早晨
-    private fun clampToDaytime(ms: Long): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = ms }
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
-        if (hour < DAY_START_HOUR || hour >= DAY_END_HOUR) {
-            cal.add(Calendar.DAY_OF_MONTH, 1)
-            cal.set(Calendar.HOUR_OF_DAY, DAY_START_HOUR)
-            cal.set(Calendar.MINUTE, Random().nextInt(DAY_END_HOUR - DAY_START_HOUR))
-            cal.set(Calendar.SECOND, 0)
-            cal.set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
+        return System.currentTimeMillis() + delay
     }
 
     private fun scheduleNextPlay() {
+        val now = System.currentTimeMillis()
         val candidates = settings.enabledTracks
-        val triggerTime = if (candidates.isEmpty()) {
-            System.currentTimeMillis() + 60 * 60 * 1000L
+        val raw = if (candidates.isEmpty()) {
+            now + 60 * 60 * 1000L
         } else {
-            candidates.minOf { settings.getNextPlayTime(it.id) }
-                .coerceAtLeast(System.currentTimeMillis())
+            candidates.minOf { settings.getNextPlayTime(it.id) }.coerceAtLeast(now)
+        }
+        // 落在休眠时段则顺延到休眠结束，保证闹钟不会在此期间响
+        val triggerTime = if (settings.isInSleep(raw)) {
+            settings.sleepEndMillis(raw)
+        } else {
+            raw
         }
         setAlarm(triggerTime, makePendingIntent())
     }
@@ -258,10 +267,12 @@ class PlaybackService : Service() {
         )
 
         val activeCount = settings.enabledTracks.size
-        val statusText = if (settings.bluetoothOnly && !isBluetoothHeadsetConnected()) {
-            "服务运行中，未连接蓝牙，等待连接后播放"
-        } else {
-            "服务运行中，已启用 $activeCount 条内容"
+        val statusText = when {
+            settings.isInSleep() -> "服务运行中，休眠时段，暂停播放"
+            isInCall() -> "服务运行中，正在通话，已暂停播放"
+            settings.bluetoothOnly && !isBluetoothHeadsetConnected() ->
+                "服务运行中，未连接蓝牙，等待连接后播放"
+            else -> "服务运行中，已启用 $activeCount 条内容"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -271,6 +282,12 @@ class PlaybackService : Service() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
+    }
+
+    // 通知默认只在服务启动时构建一次，状态变化时需主动刷新
+    private fun refreshNotification() {
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
