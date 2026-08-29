@@ -235,6 +235,19 @@ class MainActivity : ComponentActivity() {
         onSaved: () -> Unit
     ) {
         val focusManager = LocalFocusManager.current
+        var enabled by remember { mutableStateOf(track.enabled) }
+        var hasRecording by remember { mutableStateOf(track.hasRecording) }
+        var isRecording by remember { mutableStateOf(false) }
+        var repeatCount by remember { mutableStateOf(track.repeatCount) }
+        var intervalSeconds by remember { mutableStateOf(track.intervalSeconds) }
+        var scheduleMode by remember { mutableStateOf(track.scheduleMode) }
+        var frequencyPreset by remember { mutableStateOf(track.frequencyPreset) }
+        var customMinMinutes by remember { mutableStateOf(track.randomMinMinutes) }
+        var customMaxMinutes by remember { mutableStateOf(track.randomMaxMinutes) }
+        var customMinText by remember { mutableStateOf(track.randomMinMinutes.toString()) }
+        var customMaxText by remember { mutableStateOf(track.randomMaxMinutes.toString()) }
+        var dirty by remember { mutableStateOf(false) }
+
         val pickAudioLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.GetContent(),
             onResult = { uri ->
@@ -259,18 +272,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )
-        var enabled by remember { mutableStateOf(track.enabled) }
-        var hasRecording by remember { mutableStateOf(track.hasRecording) }
-        var isRecording by remember { mutableStateOf(false) }
-        var repeatCount by remember { mutableStateOf(track.repeatCount) }
-        var intervalSeconds by remember { mutableStateOf(track.intervalSeconds) }
-        var scheduleMode by remember { mutableStateOf(track.scheduleMode) }
-        var frequencyPreset by remember { mutableStateOf(track.frequencyPreset) }
-        var customMinMinutes by remember { mutableStateOf(track.randomMinMinutes) }
-        var customMaxMinutes by remember { mutableStateOf(track.randomMaxMinutes) }
-        var customMinText by remember { mutableStateOf(track.randomMinMinutes.toString()) }
-        var customMaxText by remember { mutableStateOf(track.randomMaxMinutes.toString()) }
-        var dirty by remember { mutableStateOf(false) }
 
         Scaffold(
             topBar = {
