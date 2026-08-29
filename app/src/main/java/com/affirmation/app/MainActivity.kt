@@ -175,7 +175,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Text("三条内容（点击进入单独设置）", style = MaterialTheme.typography.titleMedium)
                 tracks.forEach { track ->
                     TrackCard(track = track, onClick = { onOpenTrack(track.id) })
                 }

@@ -11,6 +11,8 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
@@ -66,7 +68,12 @@ class PlaybackService : Service() {
 
     private fun handlePlayTrigger() {
         if (!shouldPlay()) {
-            // 未连蓝牙且开启了仅蓝牙播放，短时重试，避免连上后要等很久
+            // 未连蓝牙且开启了仅蓝牙播放，短时重试
+            scheduleRetrySoon()
+            return
+        }
+        if (isInCall()) {
+            // 正在语音/视频通话，暂停播放并短时重试
             scheduleRetrySoon()
             return
         }
@@ -100,6 +107,22 @@ class PlaybackService : Service() {
         return adapter.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothAdapter.STATE_CONNECTED
     }
 
+    // 检测是否处于通话中（蜂窝通话或微信/WhatsApp 等 VoIP 语音视频通话）
+    // 通话时系统音频模式为 IN_CALL / IN_COMMUNICATION，无需额外权限
+    private fun isInCall(): Boolean {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val mode = am.mode
+        if (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) {
+            return true
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return am.activePlaybackConfigurations.any {
+                it.audioAttributes.usage == AudioAttributes.USAGE_VOICE_COMMUNICATION
+            }
+        }
+        return false
+    }
+
     private fun playAffirmation(track: TrackConfig) {
         val recordingFile = settings.getRecordingFile(this, track.id)
         if (!recordingFile.exists()) {
@@ -114,6 +137,13 @@ class PlaybackService : Service() {
         var currentRepeat = 0
 
         fun playOnce() {
+            if (isInCall()) {
+                // 通话开始，停止本轮重复播放，稍后重试
+                mediaPlayer?.release()
+                mediaPlayer = null
+                rescheduleTrack(track)
+                return
+            }
             try {
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
