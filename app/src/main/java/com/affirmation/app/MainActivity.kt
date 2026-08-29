@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -234,6 +235,30 @@ class MainActivity : ComponentActivity() {
         onSaved: () -> Unit
     ) {
         val focusManager = LocalFocusManager.current
+        val pickAudioLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetContent(),
+            onResult = { uri ->
+                uri?.let {
+                    try {
+                        val file = settings.getRecordingFile(this@MainActivity, track.id)
+                        contentResolver.openInputStream(it)?.use { input ->
+                            file.outputStream().use { out -> input.copyTo(out) }
+                        }
+                        val t = settings.getTrack(track.id)
+                        settings.saveTrack(t.copy(hasRecording = true))
+                        hasRecording = true
+                        dirty = true
+                        Toast.makeText(this@MainActivity, "已导入音频", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "导入失败: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        )
         var enabled by remember { mutableStateOf(track.enabled) }
         var hasRecording by remember { mutableStateOf(track.hasRecording) }
         var isRecording by remember { mutableStateOf(false) }
@@ -304,7 +329,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("录音", style = MaterialTheme.typography.titleMedium)
+                        Text("录音或导入", style = MaterialTheme.typography.titleMedium)
 
                         if (hasRecording) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -335,27 +360,37 @@ class MainActivity : ComponentActivity() {
                             Text("尚未录音", color = MaterialTheme.colorScheme.outline)
                         }
 
-                        Button(
-                            onClick = {
-                                if (isRecording) {
-                                    stopRecording(track.id)
-                                    isRecording = false
-                                    hasRecording = settings.getTrack(track.id).hasRecording
-                                } else {
-                                    startRecording(track.id)
-                                    isRecording = true
-                                }
-                            },
-                            colors = if (isRecording) ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ) else ButtonDefaults.buttonColors()
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
-                                contentDescription = null
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (isRecording) "停止录音" else "开始录音")
+                            Button(
+                                onClick = {
+                                    if (isRecording) {
+                                        stopRecording(track.id)
+                                        isRecording = false
+                                        hasRecording = settings.getTrack(track.id).hasRecording
+                                    } else {
+                                        startRecording(track.id)
+                                        isRecording = true
+                                    }
+                                },
+                                colors = if (isRecording) ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                ) else ButtonDefaults.buttonColors()
+                            ) {
+                                Icon(
+                                    if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
+                                    contentDescription = null
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (isRecording) "停止录音" else "开始录音")
+                            }
+                            OutlinedButton(onClick = { pickAudioLauncher.launch("audio/*") }) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("导入本地音频")
+                            }
                         }
                     }
                 }
